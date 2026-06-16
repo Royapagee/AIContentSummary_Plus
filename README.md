@@ -21,7 +21,7 @@ AIContentSummary 插件具备以下功能：
 typecho版本 >= 1.2
 
 1. 下载本项目
-2. 将下载的插件文件夹解压并上传至 Typecho 插件目录
+2. 将下载的插件文件夹 `AIContentSummaryPlus` 解压并上传至 Typecho 插件目录
 3. 登录 Typecho 后台，进入插件管理页面，启用 AIContentSummaryPlus 插件
 4. 根据提示配置插件参数
 
