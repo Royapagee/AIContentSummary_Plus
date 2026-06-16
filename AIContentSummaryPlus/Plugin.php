@@ -1,6 +1,6 @@
 <?php
 
-namespace TypechoPlugin\AIContentSummary;
+namespace TypechoPlugin\AIContentSummaryPlus;
 
 use Typecho\Common;
 use Typecho\Db;
@@ -25,16 +25,16 @@ if (!defined('__TYPECHO_ROOT_DIR__')) {
 }
 
 /**
- * AIContentSummary 插件入口。
+ * 基于 AI 的文章摘要插件，罗伊的二次修改版本，增加手动控制温度，是否发布时自动生成摘要选项。
  *
- * @package AIContentSummary
- * @author Rockytkg
+ * @package AIContentSummaryPlus
+ * @author 罗伊
  * @version 2.0.0
- * @link https://github.com/Rockytkg/AIContentSummary
+ * @link https://github.com/Royapagee/AIContentSummary_Plus
  */
 final class Plugin implements PluginInterface
 {
-    public const NAME = 'AIContentSummary';
+    public const NAME = 'AIContentSummaryPlus';
 
     /**
      * 注册前台渲染钩子、编辑页字段与后台管理入口。
@@ -42,11 +42,12 @@ final class Plugin implements PluginInterface
     public static function activate(): void
     {
         if (Client::get() === null) {
-            throw new PluginException(_t('需要启用 PHP cURL 扩展才能使用 AIContentSummary'));
+            throw new PluginException(_t('需要启用 PHP cURL 扩展才能使用 AIContentSummaryPlus'));
         }
 
         \Typecho\Plugin::factory('Widget\Base\Contents')->excerptEx = self::class . '::excerpt';
         \Typecho\Plugin::factory('Widget\Base\Contents')->contentEx = self::class . '::content';
+        \Typecho\Plugin::factory('Widget\Contents\Post\Edit')->write = self::class . '::write';
         \Typecho\Plugin::factory('Widget\Contents\Post\Edit')->finishPublish = self::class . '::finishPublish';
         \Typecho\Plugin::factory('Widget\Contents\Post\Edit')->getDefaultFieldItems = self::class . '::addField';
 
@@ -103,17 +104,26 @@ final class Plugin implements PluginInterface
                 'prompt',
                 null,
                 <<<'PROMPT'
-你是一名专业的文章摘要编辑。
-
-请基于输入的完整文章生成一段简体中文摘要，并严格遵守以下要求：
+你是一名专业的文章摘要编辑。请基于输入的完整文章生成一段简体中文摘要，并严格遵守以下要求：
 1. 只输出摘要正文，不要添加标题、标签、引号或解释。
-2. 摘要要准确、克制、信息密度高。
-3. 保留原文核心观点、结论和语气。
-4. 输出长度控制在 100 字以内。
+2. 摘要要准确、克制、保留核心主题或内容。
+3. 输出长度控制在 100 字以内。
 PROMPT,
                 _t('系统提示词'),
                 _t('用于约束摘要风格与输出格式。')
             ))->addRule('required', _t('系统提示词不能为空'))
+        );
+
+        $form->addInput(
+            (new Text(
+                'temperature',
+                null,
+                '1.0',
+                _t('接口温度 (Temperature)'),
+                _t('控制生成文本的随机性，通常在 0.0 到 2.0 之间。注意部分模型限制必须为特定值（如仅允许 1.0）。')
+            ))
+                ->addRule('required', _t('接口温度不能为空'))
+                ->addRule('isFloat', _t('接口温度必须为数字'))
         );
 
         $form->addInput(
@@ -166,7 +176,7 @@ PROMPT,
                 'summaryTemplate',
                 null,
                 <<<'HTML'
-<aside class="ai-content-summary"><strong>摘要：</strong><p>{summary}</p></aside>
+<aside class="ai-content-summary"><h1>摘要</h1><p>{summary}</p></aside>
 HTML,
                 _t('摘要模板'),
                 _t('正文前置摘要模板，必须包含 {summary} 占位符。')
@@ -222,16 +232,118 @@ HTML,
     }
 
     /**
+     * 暂存文章更新状态，以判断是否需要重新生成摘要。
+     */
+    private static bool $shouldRegenerate = false;
+
+    /**
+     * 获取并初始化日志文件路径。
+     */
+    private static function getLogFile(): string
+    {
+        $logDir = __DIR__ . '/log';
+        if (!is_dir($logDir)) {
+            @mkdir($logDir, 0777, true);
+        }
+        return $logDir . '/debug.log';
+    }
+
+    /**
+     * 文章写入时的过滤器。
+     *
+     * 比较新旧文本确定内容是否发生变化，并比对提交的摘要是否与原摘要一致以保护用户的手动编辑。
+     */
+    public static function write(array $contents, Edit $editor): array
+    {
+        $settings = Options::alloc()->plugin(self::NAME);
+        $logFile = self::getLogFile();
+        $logMsg = sprintf(
+            "[%s] write called. finishPublishSummary: %s, isAdministrator: %s\n",
+            date('Y-m-d H:i:s'),
+            ($settings->finishPublishSummary ?? 'null'),
+            (self::isAdministrator() ? 'yes' : 'no')
+        );
+        @file_put_contents($logFile, $logMsg, FILE_APPEND);
+
+        if (!$settings->finishPublishSummary || !self::isAdministrator()) {
+            return $contents;
+        }
+
+        $fieldName = $settings->fieldName;
+        $submittedFields = $editor->request->get('fields', []);
+        
+        // 检查是否启用了 AI 总结
+        $enabled = isset($submittedFields[$fieldName . '_enabled']) ? (string) $submittedFields[$fieldName . '_enabled'] : '1';
+        if ($enabled === '0') {
+            return $contents;
+        }
+
+        $oldText = trim(str_replace(['<!--markdown-->', '<!--more-->'], '', (string) $editor->text));
+        $newText = trim(str_replace(['<!--markdown-->', '<!--more-->'], '', (string) ($contents['text'] ?? '')));
+
+        if ($oldText !== '' && $oldText !== $newText) {
+            $submittedSummary = isset($submittedFields[$fieldName]) ? trim((string) $submittedFields[$fieldName]) : '';
+            $oldSummary = isset($editor->fields->{$fieldName}) ? trim((string) $editor->fields->{$fieldName}) : '';
+
+            // 如果提交的摘要值没有发生任何修改，说明没有手动干预，可以自动更新
+            if ($submittedSummary === $oldSummary) {
+                self::$shouldRegenerate = true;
+            }
+        }
+
+        return $contents;
+    }
+
+    /**
      * 发布完成后按需生成摘要。
      */
     public static function finishPublish(array $contents, Edit $editor): void
     {
         $settings = Options::alloc()->plugin(self::NAME);
-        if (!$settings->finishPublishSummary || !self::isAdministrator()) {
+        $logFile = self::getLogFile();
+        $fieldName = $settings->fieldName;
+        $submittedFields = $editor->request->get('fields', []);
+        $enabled = isset($submittedFields[$fieldName . '_enabled'])
+            ? (string) $submittedFields[$fieldName . '_enabled']
+            : (isset($editor->fields->{$fieldName . '_enabled'}) ? (string) $editor->fields->{$fieldName . '_enabled'} : '1');
+
+        $logMsg = sprintf(
+            "[%s] finishPublish called. finishPublishSummary: %s, isAdministrator: %s, enabled: %s, cid: %s, shouldRegenerate: %s\n",
+            date('Y-m-d H:i:s'),
+            ($settings->finishPublishSummary ?? 'null'),
+            (self::isAdministrator() ? 'yes' : 'no'),
+            $enabled,
+            $editor->cid,
+            (self::$shouldRegenerate ? 'yes' : 'no')
+        );
+        @file_put_contents($logFile, $logMsg, FILE_APPEND);
+
+        if (!$settings->finishPublishSummary || !self::isAdministrator() || $enabled === '0') {
             return;
         }
 
-        self::ensureSummary((int) $editor->cid, (string) ($contents['text'] ?? ''));
+        $cid = (int) $editor->cid;
+        $text = (string) ($contents['text'] ?? '');
+        $force = self::$shouldRegenerate;
+
+        // 注册挂接页面完成响应后的回调，实现真正的异步（先重定向发布页面，再后台请求接口更新摘要）
+        register_shutdown_function(static function () use ($cid, $text, $force, $logFile) {
+            if (function_exists('fastcgi_finish_request')) {
+                fastcgi_finish_request();
+            }
+            try {
+                Plugin::ensureSummary($cid, $text, $force);
+                @file_put_contents($logFile, sprintf("[%s] async ensureSummary succeeded.\n", date('Y-m-d H:i:s')), FILE_APPEND);
+            } catch (\Throwable $e) {
+                $logMsgErr = sprintf(
+                    "[%s] async ensureSummary failed. Error: %s\nStack trace:\n%s\n",
+                    date('Y-m-d H:i:s'),
+                    $e->getMessage(),
+                    $e->getTraceAsString()
+                );
+                @file_put_contents($logFile, $logMsgErr, FILE_APPEND);
+            }
+        });
     }
 
     /**
@@ -246,17 +358,27 @@ HTML,
             return;
         }
 
+        $fieldName = Options::alloc()->plugin(self::NAME)->fieldName;
+
         $field = new Textarea(
-            Options::alloc()->plugin(self::NAME)->fieldName,
+            $fieldName,
             null,
             null,
             _t('AI 摘要'),
             _t('手动填写后将优先作为文章摘要输出，同时跳过发布时的自动生成。')
         );
         // 自定义字段区域会把 textarea 放进 field-value 列，这里只需要控制输入框尺寸。
-        $field->input?->setAttribute('class', 'w-100');
-
+        $field->setInputsAttribute('style', 'width:100%;height:96px;');
         $layout->addItem($field);
+
+        $enabled = new Radio(
+            $fieldName . '_enabled',
+            ['1' => _t('启用'), '0' => _t('禁用')],
+            '1',
+            _t('自动 AI 总结'),
+            _t('是否为此文章自动生成 AI 总结。')
+        );
+        $layout->addItem($enabled);
     }
 
     /**
@@ -264,7 +386,7 @@ HTML,
      *
      * 发布钩子会优先使用当前编辑器中的正文，避免重复查询数据库。
      */
-    public static function ensureSummary(int $cid, string $text = ''): ?string
+    public static function ensureSummary(int $cid, string $text = '', bool $force = false): ?string
     {
         $fieldName = Options::alloc()->plugin(self::NAME)->fieldName;
         $exists = Db::get()->fetchRow(
@@ -274,7 +396,7 @@ HTML,
                 ->limit(1)
         );
 
-        if ($exists && trim((string) $exists['str_value']) !== '') {
+        if (!$force && $exists && trim((string) $exists['str_value']) !== '') {
             return null;
         }
 
@@ -381,7 +503,7 @@ HTML,
                     ['role' => 'system', 'content' => $settings->prompt],
                     ['role' => 'user', 'content' => $text],
                 ],
-                'temperature' => 0,
+                'temperature' => isset($settings->temperature) && is_numeric($settings->temperature) ? (float) $settings->temperature : 1.0,
             ])
             ->send(
                 // 兼容填写接口根地址和直接填写 /chat/completions 完整地址两种方式。

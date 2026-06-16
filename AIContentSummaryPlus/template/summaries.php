@@ -2,7 +2,7 @@
 
 use Typecho\Common;
 use Typecho\Cookie;
-use TypechoPlugin\AIContentSummary\Plugin;
+use TypechoPlugin\AIContentSummaryPlus\Plugin;
 
 if (!defined('__TYPECHO_ROOT_DIR__')) {
     exit;
@@ -17,7 +17,7 @@ $posts = \Widget\Contents\Post\Admin::alloc();
 $settings = \Widget\Options::alloc()->plugin(Plugin::NAME);
 $fieldName = $settings->fieldName;
 $isAllPosts = $request->get('__typecho_all_posts') === 'on' || Cookie::get('__typecho_all_posts') === 'on';
-$panelBase = 'extending.php?panel=AIContentSummary/template/summaries.php';
+$panelBase = 'extending.php?panel=AIContentSummaryPlus/template/summaries.php';
 $actionBase = $security->getIndex('/action/summaries');
 
 $statusTabs = [
@@ -148,7 +148,7 @@ $buildPanelUrl = static function (array $query = []) use ($options, $panelBase):
                             <?php endwhile; ?>
                         </select>
                         <button type="submit" class="btn btn-s"><?php _e('筛选'); ?></button>
-                        <input type="hidden" name="panel" value="AIContentSummary/template/summaries.php"/>
+                        <input type="hidden" name="panel" value="AIContentSummaryPlus/template/summaries.php"/>
                         <?php if (isset($request->uid)): ?>
                             <input type="hidden" name="uid" value="<?php echo htmlspecialchars((string) $request->filter('html')->uid, ENT_QUOTES, 'UTF-8'); ?>"/>
                         <?php endif; ?>

@@ -1,6 +1,6 @@
 <?php
 
-namespace TypechoPlugin\AIContentSummary;
+namespace TypechoPlugin\AIContentSummaryPlus;
 
 use Typecho\Widget\Exception;
 use Widget\ActionInterface;
