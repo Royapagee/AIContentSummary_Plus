@@ -1,4 +1,4 @@
-# AIContentSummaryPlus
+# AIContentSummary_Plus
 
 AIContentSummary 是一个用于通过调用AI接口，根据文章内容生成摘要的 Typecho 插件。
 Plus 版根据作者的需求自己修复了使用中发生的bug，并增加了一些功能。
@@ -21,7 +21,7 @@ AIContentSummary 插件具备以下功能：
 typecho版本 >= 1.2
 
 1. 下载本项目
-2. 将下载的插件文件夹 `AIContentSummaryPlus` 解压并上传至 Typecho 插件目录
+2. 将插件文件夹 `AIContentSummaryPlus` 上传至 Typecho 插件目录
 3. 登录 Typecho 后台，进入插件管理页面，启用 AIContentSummaryPlus 插件
 4. 根据提示配置插件参数
 
@@ -37,4 +37,4 @@ typecho版本 >= 1.2
 
 ## 免费插件，欢迎 Star
 
-AIContentSummaryPlus 插件完全免费。如果这个插件帮助到了您，请帮原作者作者及二次作者点个 Star，感谢您的支持！
+AIContentSummary_Plus 插件完全免费。如果这个插件帮助到了您，请帮原作者作者及二次作者点个 Star，感谢您的支持！
